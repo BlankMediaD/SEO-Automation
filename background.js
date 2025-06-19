@@ -1,3 +1,29 @@
+async function pingContentScript(tabId, attempt = 1, maxAttempts = 5, delay = 300) {
+  // console.log(`Pinging content script on tab ${tabId}, attempt ${attempt}`);
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { action: "ping" });
+    if (response && response.action === "pong" && response.status === "ready") {
+      // console.log(`Pong received from content script on tab ${tabId}`);
+      return true;
+    }
+    // console.warn(`Unexpected pong response from tab ${tabId}:`, response);
+  } catch (error) { // Catches chrome.runtime.lastError implicitly for async sendMessage
+    // console.warn(`Ping attempt ${attempt} failed for tab ${tabId}:`, error.message);
+    if (error.message.includes("Receiving end does not exist") || error.message.includes("Could not establish connection")) {
+      // Expected error if content script is not ready or on a restricted page
+    } else {
+      // Unexpected error
+      console.error(`Unexpected error during ping to tab ${tabId}:`, error);
+    }
+  }
+
+  if (attempt < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, delay));
+    return pingContentScript(tabId, attempt + 1, maxAttempts, delay);
+  }
+  return false;
+}
+
 let isRecording = false;
 let recordedData = [];
 let currentTabId = null;
@@ -10,56 +36,67 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ isRecording: isRecording, domain: recordingDomain, tabId: currentTabId });
     return true;
   } else if (request.action === "startRecording") {
-    if (isRecording) {
-      sendResponse({ success: false, message: "Already recording." });
-      return true;
-    }
-    isRecording = true;
-    recordedData = []; // Reset data
-    currentTabId = request.tabId;
-    recordingDomain = request.domain;
-    initialUrlForRecording = request.initialUrl;
-    lastDomEventTimestamp = null; // Reset
-    lastDomEventIndex = -1;      // Reset
-    pendingRequests = {};       // Reset
-    awaitingEmailVerification = false;
-    emailSubmissionTimestamp = null;
-    lastSubmittedUsername = null;
+        if (isRecording) {
+            sendResponse({ success: false, message: "Already recording." });
+            return true;
+        }
 
-    console.log(`Background: Start recording requested for tab ${currentTabId} on domain ${recordingDomain}`);
+        // /////// START OF MODIFIED SECTION ///////
+        (async () => { // Use async IIFE to use await for ping
+            const targetTabId = request.tabId;
+            const contentScriptReady = await pingContentScript(targetTabId);
 
-    // Log the initial navigation event
-    recordedData.push({
-      type: "navigate",
-      url: initialUrlForRecording,
-      timestamp: new Date().toISOString(),
-      // No selector or value for initial navigation
-    });
-    console.log("Background: Initial navigation event logged.", recordedData);
+            if (!contentScriptReady) {
+                console.error(`Background: Content script on tab ${targetTabId} not responding after multiple attempts.`);
+                sendResponse({ success: false, message: "Content script not responding. Try reloading the page or ensure it's not a restricted page." });
+                return; // Exit early
+            }
+
+            // If ping successful, proceed with recording logic
+            isRecording = true;
+            recordedData = []; // Reset data
+            currentTabId = targetTabId;
+            recordingDomain = request.domain;
+            initialUrlForRecording = request.initialUrl;
+            // Reset other necessary state variables (lastDomEventTimestamp, awaitingEmailVerification, etc.)
+            lastDomEventTimestamp = null;
+            lastDomEventIndex = -1;
+            pendingRequests = {};
+            awaitingEmailVerification = false;
+            emailSubmissionTimestamp = null;
+            lastSubmittedUsername = null;
 
 
-    // Send message to content script to start listening to DOM events
-    chrome.tabs.sendMessage(currentTabId, { action: "startRecordingEvents", tabId: currentTabId }, (csResponse) => {
-      if (chrome.runtime.lastError) {
-        console.error("Error sending startRecordingEvents to content script:", chrome.runtime.lastError.message);
-        isRecording = false; // Rollback state
-        currentTabId = null;
-        recordingDomain = null;
-        initialUrlForRecording = null;
-        sendResponse({ success: false, message: "Failed to connect to content script.", error: chrome.runtime.lastError.message });
-      } else if (csResponse && csResponse.status === "listening") {
-        console.log("Background: Content script acknowledged start and is listening.", csResponse);
-        sendResponse({ success: true, message: "Recording started on tab " + currentTabId });
-      } else {
-        console.warn("Background: Content script responded unexpectedly or failed to start listeners.", csResponse);
-        // Even if content script fails, background might still record network.
-        // Decide if this is a critical failure. For now, proceed but log.
-        sendResponse({ success: true, message: "Recording started, but content script status uncertain." });
-      }
-    });
-    return true; // Indicates that the response will be sent asynchronously
+            console.log(`Background: Start recording requested for tab ${currentTabId} on domain ${recordingDomain}`);
 
-  } else if (request.action === "stopRecording") {
+            recordedData.push({
+                type: "navigate",
+                url: initialUrlForRecording,
+                timestamp: new Date().toISOString(),
+            });
+
+            chrome.tabs.sendMessage(currentTabId, { action: "startRecordingEvents", tabId: currentTabId }, (csResponse) => {
+                if (chrome.runtime.lastError) {
+                    console.error("Error sending startRecordingEvents to content script:", chrome.runtime.lastError.message);
+                    isRecording = false; // Rollback state
+                    currentTabId = null;
+                    recordingDomain = null;
+                    sendResponse({ success: false, message: "Failed to initiate recording in content script: " + chrome.runtime.lastError.message });
+                } else if (csResponse && csResponse.status === "listening") {
+                    console.log("Background: Content script acknowledged start and is listening.", csResponse);
+                    sendResponse({ success: true, message: "Recording started on tab " + currentTabId });
+                } else {
+                    console.warn("Background: Content script responded unexpectedly after startRecordingEvents.", csResponse);
+                    isRecording = false; // Rollback state
+                    currentTabId = null;
+                    recordingDomain = null;
+                    sendResponse({ success: false, message: "Content script did not confirm listening for recording events." });
+                }
+            });
+        })(); // End of async IIFE
+        // /////// END OF MODIFIED SECTION ///////
+        return true; // Crucial: Indicates that sendResponse will be called asynchronously
+    } else if (request.action === "stopRecording") {
     if (!isRecording) {
       sendResponse({ success: false, message: "Not recording." });
       return true;

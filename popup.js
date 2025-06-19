@@ -62,12 +62,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
           chrome.runtime.sendMessage({ action: "startRecording", tabId: currentTab.id, initialUrl: currentTab.url, domain: domain }, (startResponse) => {
             if (chrome.runtime.lastError || !startResponse || !startResponse.success) {
-              console.error("Error starting recording:", chrome.runtime.lastError ? chrome.runtime.lastError.message : "No response or failed");
-              statusIndicator.textContent = 'Error starting.';
-              updateUI(false); // Revert UI
+              let detailedErrorMessage = "Unknown error occurred while trying to start recording."; // Default
+
+              if (chrome.runtime.lastError) {
+                detailedErrorMessage = "Error: " + chrome.runtime.lastError.message;
+                // Specific check for a common scenario, though background.js now tries to catch this.
+                if (chrome.runtime.lastError.message.includes("Could not establish connection") || chrome.runtime.lastError.message.includes("Receiving end does not exist")) {
+                    detailedErrorMessage = "Failed to connect to the page. Please reload the page and try again. (Content script might be blocked or not loaded yet).";
+                }
+              } else if (startResponse && startResponse.message) {
+                // Use the message from background.js if provided
+                detailedErrorMessage = startResponse.message;
+              } else if (!startResponse) {
+                detailedErrorMessage = "No response from the extension's background process.";
+              }
+
+              console.error("Popup: Error starting recording -", detailedErrorMessage, "Full response:", startResponse);
+              statusIndicator.textContent = detailedErrorMessage; // Display the more specific error
+              updateUI(false); // Revert UI to non-recording state
             } else {
               // Successfully started
-              console.log("Recording started successfully on background.");
+              console.log("Popup: Recording started successfully via background.");
+              // The updateUI(true, domain) was already called optimistically.
+              // statusIndicator.textContent = 'Status: Recording...'; // This is handled by updateUI
             }
           });
         });
