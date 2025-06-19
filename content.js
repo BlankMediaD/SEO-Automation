@@ -189,6 +189,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     isActive = false;
     removeListeners();
     sendResponse({ status: "stopped" });
+  } else if (request.action === "ping") {
+    // console.log("Content script received ping from background.");
+    sendResponse({ action: "pong", status: "ready" });
+    return true; // Keep true if sendResponse might be async, though here it's sync.
   }
   return true;
 });
