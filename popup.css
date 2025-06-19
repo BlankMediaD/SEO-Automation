@@ -1,0 +1,40 @@
+body {
+  font-family: sans-serif;
+  width: 280px; /* Slightly wider for domain display */
+  padding: 10px;
+  text-align: center; /* Center align content */
+}
+h1 {
+  font-size: 18px; /* Slightly larger title */
+  margin-bottom: 15px;
+}
+button {
+  width: 80%; /* Not full width for better aesthetics */
+  padding: 12px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  font-size: 16px;
+  cursor: pointer;
+}
+#statusIndicator {
+  font-weight: bold;
+  margin-top: 5px;
+  min-height: 20px; /* Prevent layout shifts */
+}
+#recordingDomain {
+  font-style: italic;
+  color: #555;
+  min-height: 18px; /* Prevent layout shifts */
+  word-wrap: break-word; /* Wrap long domains */
+}
+
+.recording {
+  border: 2px solid red; /* Example: visual cue on body or button */
+  animation: blinker 1s linear infinite;
+}
+
+@keyframes blinker {
+  50% {
+    opacity: 0.5;
+  }
+}
